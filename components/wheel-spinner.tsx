@@ -1,43 +1,34 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import confetti from "canvas-confetti";
+import { PlusCircle, Trash2, Settings, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Card, CardContent } from "@/components/ui/card";
-import { PlusCircle, Trash2, Settings, Volume2, VolumeX } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import confetti from "canvas-confetti";
 import { cn } from "@/lib/utils";
 
+// Types
 interface WheelItem {
   id: string;
   label: string;
   probability: number;
   color: string;
-  hidden?: boolean; // Add this field
+  hidden?: boolean;
 }
 
+// Constants
 const COLORS = [
-  "#FF6384",
-  "#36A2EB",
-  "#FFCE56",
-  "#4BC0C0",
-  "#9966FF",
-  "#FF9F40",
-  "#8AC926",
-  "#1982C4",
-  "#6A4C93",
-  "#F15BB5",
-];
+  "#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0",
+  "#9966FF", "#FF9F40", "#8AC926", "#1982C4",
+  "#6A4C93", "#F15BB5",
+] as const;
 
 export function WheelSpinner() {
-  const [editingProbabilityId, setEditingProbabilityId] = useState<
-    string | null
-  >(null);
-  const [editingProbability, setEditingProbability] = useState<string>("");
-
+  // Wheel items state
   const [items, setItems] = useState<WheelItem[]>([
     { id: "1", label: "Prize 1", probability: 20, color: COLORS[0] },
     { id: "2", label: "Prize 2", probability: 20, color: COLORS[1] },
@@ -45,18 +36,60 @@ export function WheelSpinner() {
     { id: "4", label: "Prize 4", probability: 20, color: COLORS[3] },
     { id: "5", label: "Prize 5", probability: 20, color: COLORS[4] },
   ]);
-
-  const [winnerHidden, setWinnerHidden] = useState(false);
   const [newItemLabel, setNewItemLabel] = useState("");
+
+  // Item editing state
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingLabel, setEditingLabel] = useState("");
+  const [editingProbabilityId, setEditingProbabilityId] = useState<string | null>(null);
+  const [editingProbability, setEditingProbability] = useState<string>("");
+
+  // Wheel spinning state
   const [spinning, setSpinning] = useState(false);
-  const [winner, setWinner] = useState<WheelItem | null>(null);
   const [rotation, setRotation] = useState(0);
+  const [winner, setWinner] = useState<WheelItem | null>(null);
+  const [winnerHidden, setWinnerHidden] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const spinSoundRef = useRef<HTMLAudioElement | null>(null);
   const winSoundRef = useRef<HTMLAudioElement | null>(null);
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [editingLabel, setEditingLabel] = useState("");
+
+  // Utility functions
+  const calculateEqualShare = useCallback((visibleItems: WheelItem[]) => {
+    const equalShare = Math.floor(100 / visibleItems.length);
+    return visibleItems.map((item, index) => ({
+      ...item,
+      probability:
+        index === visibleItems.length - 1
+          ? 100 - equalShare * (visibleItems.length - 1)
+          : equalShare,
+    }));
+  }, []);
+
+  const getVisibleItems = useCallback((items: WheelItem[]) => {
+    return items.filter(item => !item.hidden);
+  }, []);
+
+  // Sound effects handling
+  const playSound = useCallback(async (audio: HTMLAudioElement | null) => {
+    if (soundEnabled && audio) {
+      audio.currentTime = 0;
+      try {
+        await audio.play();
+      } catch (e) {
+        console.error("Error playing sound:", e);
+      }
+    }
+  }, [soundEnabled]);
+
+  const stopSound = useCallback((audio: HTMLAudioElement | null) => {
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+  }, []);
 
   // Initialize audio elements
   useEffect(() => {
@@ -72,42 +105,27 @@ export function WheelSpinner() {
     };
   }, []);
 
-  // Draw the wheel whenever items change
-  useEffect(() => {
-    drawWheel();
-  }, [items, rotation]);
-
   // Normalize probabilities to ensure they sum to 100
-  const normalizeProbabilities = (
-    updatedItems: WheelItem[],
-    fixedId?: string
-  ): WheelItem[] => {
-    // First ensure no negative values
-    const safeItems = updatedItems.map((item) => ({
+  const normalizeProbabilities = useCallback((updatedItems: WheelItem[], fixedId?: string): WheelItem[] => {
+    const safeItems = updatedItems.map(item => ({
       ...item,
       probability: Math.max(1, item.probability),
     }));
 
     const total = safeItems.reduce((sum, item) => sum + item.probability, 0);
-
     if (total === 0) return safeItems;
 
-    // If we're updating a specific item, adjust others proportionally
     if (fixedId) {
-      const fixedItem = safeItems.find((item) => item.id === fixedId);
+      const fixedItem = safeItems.find(item => item.id === fixedId);
       if (!fixedItem) return safeItems;
 
       const remainingTotal = 100 - fixedItem.probability;
-      const otherItemsTotal = safeItems
-        .filter((item) => item.id !== fixedId)
-        .reduce((sum, item) => sum + item.probability, 0);
+      const otherItems = safeItems.filter(item => item.id !== fixedId);
+      const otherItemsTotal = otherItems.reduce((sum, item) => sum + item.probability, 0);
 
-      return safeItems.map((item) => {
-        if (item.id === fixedId) {
-          return item;
-        }
-        const ratio =
-          otherItemsTotal === 0 ? 1 : item.probability / otherItemsTotal;
+      return safeItems.map(item => {
+        if (item.id === fixedId) return item;
+        const ratio = otherItemsTotal === 0 ? 1 : item.probability / otherItemsTotal;
         return {
           ...item,
           probability: Math.max(1, Math.round(remainingTotal * ratio)),
@@ -115,15 +133,14 @@ export function WheelSpinner() {
       });
     }
 
-    // Normal normalization for other cases
-    return safeItems.map((item) => ({
+    return safeItems.map(item => ({
       ...item,
       probability: Math.max(1, Math.round((item.probability / total) * 100)),
     }));
-  };
+  }, []);
 
-  // Add a new item to the wheel
-  const addItem = () => {
+  // Item management
+  const addItem = useCallback(() => {
     if (!newItemLabel.trim()) return;
 
     const newItem: WheelItem = {
@@ -133,74 +150,100 @@ export function WheelSpinner() {
       color: COLORS[items.length % COLORS.length],
     };
 
-    const updatedItems = [...items, newItem];
-    setItems(normalizeProbabilities(updatedItems));
+    setItems(items => normalizeProbabilities([...items, newItem]));
     setNewItemLabel("");
-  };
+  }, [items.length, newItemLabel, normalizeProbabilities]);
 
-  // Remove an item from the wheel
-  const removeItem = (id: string) => {
-    if (items.length <= 2) return; // Maintain at least 2 items
+  const removeItem = useCallback((id: string) => {
+    if (items.length <= 2) return;
 
-    // Remove the item
-    const updatedItems = items.filter((item) => item.id !== id);
+    setItems(items => {
+      const updatedItems = items.filter(item => item.id !== id);
+      const visibleItems = getVisibleItems(updatedItems);
+      const normalizedVisible = calculateEqualShare(visibleItems);
 
-    // Get visible items after removal
-    const visibleItems = updatedItems.filter((item) => !item.hidden);
-    const equalShare = Math.floor(100 / visibleItems.length);
-
-    // Distribute probabilities evenly among visible items
-    const normalizedVisible = visibleItems.map((item, index) => ({
-      ...item,
-      probability:
-        index === visibleItems.length - 1
-          ? 100 - equalShare * (visibleItems.length - 1)
-          : equalShare,
-    }));
-
-    // Merge back with hidden items
-    const finalItems = updatedItems.map((item) => {
-      if (item.hidden) return item;
-      return normalizedVisible.find((ni) => ni.id === item.id) || item;
+      return updatedItems.map(item =>
+        item.hidden ? item : normalizedVisible.find(ni => ni.id === item.id) || item
+      );
     });
+  }, [items.length, getVisibleItems, calculateEqualShare]);
 
-    setItems(finalItems);
-  };
-
-  // Update an item's probability
-  const updateProbability = (id: string, value: number) => {
-    const newValue = Math.max(1, Math.min(99, value)); // Limit to 99 to leave room for others
-    const updatedItems = items.map((item) =>
-      item.id === id ? { ...item, probability: newValue } : item
+  const updateProbability = useCallback((id: string, value: number) => {
+    const newValue = Math.max(1, Math.min(99, value));
+    setItems(items => 
+      normalizeProbabilities(
+        items.map(item => item.id === id ? { ...item, probability: newValue } : item),
+        id
+      )
     );
+  }, [normalizeProbabilities]);
 
-    setItems(normalizeProbabilities(updatedItems, id));
-  };
+  const toggleItemVisibility = useCallback((id: string) => {
+    setItems(items => {
+      const updatedItems = items.map(item =>
+        item.id === id ? { ...item, hidden: !item.hidden } : item
+      );
 
-  const startEditingItem = (item: WheelItem) => {
+      const visibleItems = getVisibleItems(updatedItems);
+      const normalizedVisible = calculateEqualShare(visibleItems);
+
+      return updatedItems.map(item =>
+        item.hidden ? item : normalizedVisible.find(ni => ni.id === item.id) || item
+      );
+    });
+  }, [getVisibleItems, calculateEqualShare]);
+
+  // Item editing
+  const startEditingItem = useCallback((item: WheelItem) => {
     setEditingItemId(item.id);
     setEditingLabel(item.label);
-  };
+  }, []);
 
-  const saveItemLabel = () => {
+  const saveItemLabel = useCallback(() => {
     if (!editingItemId) return;
 
-    const updatedItems = items.map((item) =>
-      item.id === editingItemId ? { ...item, label: editingLabel } : item
+    setItems(items =>
+      items.map(item =>
+        item.id === editingItemId ? { ...item, label: editingLabel } : item
+      )
     );
-
-    setItems(updatedItems);
     setEditingItemId(null);
     setEditingLabel("");
-  };
+  }, [editingItemId, editingLabel]);
 
-  const cancelEditing = () => {
+  const startEditingProbability = useCallback((item: WheelItem) => {
+    setEditingProbabilityId(item.id);
+    setEditingProbability(item.probability.toString());
+  }, []);
+
+  const saveProbability = useCallback(() => {
+    if (!editingProbabilityId) return;
+    const value = Math.max(1, Math.min(99, parseInt(editingProbability) || 0));
+    updateProbability(editingProbabilityId, value);
+    setEditingProbabilityId(null);
+    setEditingProbability("");
+  }, [editingProbabilityId, editingProbability, updateProbability]);
+
+  const cancelEditing = useCallback(() => {
     setEditingItemId(null);
     setEditingLabel("");
-  };
+  }, []);
 
-  // Draw the wheel on the canvas
-  const drawWheel = () => {
+  const cancelEditingProbability = useCallback(() => {
+    setEditingProbabilityId(null);
+    setEditingProbability("");
+  }, []);
+
+  const removeWinnerItem = useCallback(() => {
+    if (winner) {
+      removeItem(winner.id);
+      setWinner(null);
+      setWinnerHidden(false);
+    }
+  }, [winner, removeItem]);
+
+  // Wheel drawing
+  const drawWheel = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -214,8 +257,7 @@ export function WheelSpinner() {
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Get visible items
-    const visibleItems = items.filter((item) => !item.hidden);
+    const visibleItems = getVisibleItems(items);
 
     if (visibleItems.length === 0) {
       // Draw full circle with last hidden item's color
@@ -237,14 +279,13 @@ export function WheelSpinner() {
       normalizedItems.forEach((item) => {
         const sliceAngle = (2 * Math.PI * item.probability) / 100;
 
+        // Draw segment
         ctx.beginPath();
         ctx.moveTo(centerX, centerY);
         ctx.arc(centerX, centerY, radius, startAngle, startAngle + sliceAngle);
         ctx.closePath();
-
         ctx.fillStyle = item.color;
         ctx.fill();
-
         ctx.strokeStyle = "#FFFFFF";
         ctx.lineWidth = 2;
         ctx.stroke();
@@ -274,45 +315,69 @@ export function WheelSpinner() {
 
     // Draw pointer
     ctx.beginPath();
-    ctx.moveTo(centerX + radius - 10, centerY); // Changed from + to -
-    ctx.lineTo(centerX + radius + 10, centerY - 15); // Changed from - to +
-    ctx.lineTo(centerX + radius + 10, centerY + 15); // Changed from - to +
+    ctx.moveTo(centerX + radius - 10, centerY);
+    ctx.lineTo(centerX + radius + 10, centerY - 15);
+    ctx.lineTo(centerX + radius + 10, centerY + 15);
     ctx.closePath();
     ctx.fillStyle = "#FF0000";
     ctx.fill();
-  };
+  }, [items, rotation, normalizeProbabilities, getVisibleItems]);
 
-  // Spin the wheel
-  const spinWheel = () => {
+  // Draw the wheel whenever items change
+  useEffect(() => {
+    drawWheel();
+  }, [drawWheel]);
+
+  // Animation
+  const triggerConfetti = useCallback(() => {
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const x = (rect.left + rect.right) / 2 / window.innerWidth;
+    const y = (rect.top + rect.bottom) / 2 / window.innerHeight;
+
+    confetti({
+      particleCount: 100,
+      spread: 70,
+      origin: { x, y },
+    });
+  }, []);
+
+  const determineWinner = useCallback((currentRotation: number, visibleItems: WheelItem[]) => {
+    const normalizedAngle = currentRotation % 360;
+    const normalizedItems = normalizeProbabilities([...visibleItems]);
+
+    let currentAngle = 0;
+    for (const item of normalizedItems) {
+      const sliceAngle = (360 * item.probability) / 100;
+      if (normalizedAngle >= currentAngle && normalizedAngle < currentAngle + sliceAngle) {
+        return item;
+      }
+      currentAngle += sliceAngle;
+    }
+    return null;
+  }, [normalizeProbabilities]);
+
+  // Spin wheel animation
+  const spinWheel = useCallback(() => {
     if (spinning) return;
-    const visibleItems = items.filter((item) => !item.hidden);
+
+    const visibleItems = getVisibleItems(items);
     if (visibleItems.length < 2) return;
 
     setSpinning(true);
     setWinner(null);
+    playSound(spinSoundRef.current);
 
-    // Play spin sound
-    if (soundEnabled && spinSoundRef.current) {
-      spinSoundRef.current.currentTime = 0;
-      spinSoundRef.current
-        .play()
-        .catch((e) => console.error("Error playing sound:", e));
-    }
-
-    // Calculate random spin between 5-10 full rotations plus a random segment
     const spinAngle = 1800 + Math.random() * 1800;
-    const newRotation = rotation + spinAngle;
-
-    // Animate the spin
     let currentRotation = rotation;
     const startTime = Date.now();
-    const duration = 5000; // 5 seconds
+    const duration = 5000;
 
     const animate = () => {
       const elapsed = Date.now() - startTime;
       const progress = Math.min(elapsed / duration, 1);
-
-      // Easing function for natural slowdown
       const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
 
       currentRotation = rotation + spinAngle * easeOut(progress);
@@ -321,55 +386,13 @@ export function WheelSpinner() {
       if (progress < 1) {
         requestAnimationFrame(animate);
       } else {
-        // Determine winner
+        stopSound(spinSoundRef.current);
 
-        if (soundEnabled && spinSoundRef.current) {
-          spinSoundRef.current.pause();
-          spinSoundRef.current.currentTime = 0;
-        }
-
-        const normalizedAngle = currentRotation % 360;
-        const normalizedItems = normalizeProbabilities([...visibleItems]);
-
-        let currentAngle = 0;
-        let winningItem: WheelItem | null = null;
-
-        for (const item of normalizedItems) {
-          const sliceAngle = (360 * item.probability) / 100;
-          if (
-            normalizedAngle >= currentAngle &&
-            normalizedAngle < currentAngle + sliceAngle
-          ) {
-            winningItem = item;
-            break;
-          }
-          currentAngle += sliceAngle;
-        }
-
+        const winningItem = determineWinner(currentRotation, visibleItems);
         if (winningItem) {
           setWinner(winningItem);
-
-          // Play win sound
-          if (soundEnabled && winSoundRef.current) {
-            winSoundRef.current.currentTime = 0;
-            winSoundRef.current
-              .play()
-              .catch((e) => console.error("Error playing sound:", e));
-          }
-
-          // Trigger confetti
-          if (canvasRef.current) {
-            const canvas = canvasRef.current;
-            const rect = canvas.getBoundingClientRect();
-            const x = (rect.left + rect.right) / 2 / window.innerWidth;
-            const y = (rect.top + rect.bottom) / 2 / window.innerHeight;
-
-            confetti({
-              particleCount: 100,
-              spread: 70,
-              origin: { x, y },
-            });
-          }
+          playSound(winSoundRef.current);
+          triggerConfetti();
         }
 
         setSpinning(false);
@@ -377,61 +400,16 @@ export function WheelSpinner() {
     };
 
     animate();
-  };
-
-  const startEditingProbability = (item: WheelItem) => {
-    setEditingProbabilityId(item.id);
-    setEditingProbability(item.probability.toString());
-  };
-
-  const saveProbability = () => {
-    if (!editingProbabilityId) return;
-
-    const value = Math.max(1, Math.min(99, parseInt(editingProbability) || 0));
-    updateProbability(editingProbabilityId, value);
-    setEditingProbabilityId(null);
-    setEditingProbability("");
-  };
-
-  const cancelEditingProbability = () => {
-    setEditingProbabilityId(null);
-    setEditingProbability("");
-  };
-
-  const removeWinnerItem = () => {
-    if (winner) {
-      removeItem(winner.id);
-      setWinner(null);
-      setWinnerHidden(false);
-    }
-  };
-
-  const toggleItemVisibility = (id: string) => {
-    const updatedItems = items.map((item) =>
-      item.id === id ? { ...item, hidden: !item.hidden } : item
-    );
-
-    // When unhiding an item, give it an equal share of probability
-    const visibleItems = updatedItems.filter((item) => !item.hidden);
-    const equalShare = Math.floor(100 / visibleItems.length);
-
-    // Distribute probabilities evenly among visible items
-    const normalizedItems = visibleItems.map((item, index) => ({
-      ...item,
-      probability:
-        index === visibleItems.length - 1
-          ? 100 - equalShare * (visibleItems.length - 1)
-          : equalShare,
-    }));
-
-    // Merge back with hidden items
-    const finalItems = updatedItems.map((item) => {
-      if (item.hidden) return item;
-      return normalizedItems.find((ni) => ni.id === item.id) || item;
-    });
-
-    setItems(finalItems);
-  };
+  }, [
+    spinning,
+    items,
+    rotation,
+    playSound,
+    stopSound,
+    determineWinner,
+    getVisibleItems,
+    triggerConfetti,
+  ]);
 
   return (
     <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-3 gap-6">
